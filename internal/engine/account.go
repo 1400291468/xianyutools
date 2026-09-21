@@ -381,15 +381,12 @@ func New(cfg Config) *Account {
 			a.reply = NewReplyService(cfg.CookieID, cfg.Store, cfg.ReplyDelivery, nil, aiReplier, logger)
 		}
 	}
-	// publisher 是平台客户端提供的商品发布人查询能力；缺失时回复门禁保持关闭。
-	publisher, _ := mtopClient.(replyItemPublisher)
 	a.messageDispatcher = newMessageDispatcher(messageDispatcherConfig{
 		CookieID:        cfg.CookieID,
 		CurrentCookie:   a.currentCookieStr,
 		CurrentHandler:  func() Handler { return a.handler },
 		ObserveOutgoing: echoTracker.observeMessage,
 		Reply:           a.reply,
-		ItemPublisher:   publisher,
 		Logger:          logger,
 		BeginTask:       a.lifecycle.beginTask,
 		RecordMessage:   a.recordMessageReceived,
