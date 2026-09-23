@@ -45,6 +45,8 @@ type QRLoginInput struct {
 	ScannedAccountID string
 	// TargetAccountID 是可选的待重新授权账号标识；为空时按扫码账号创建或更新。
 	TargetAccountID string
+	// RequireNewAccount 禁止覆盖已存在账号，用于多租户平台首次绑定，防止后续归属校验失败时改写凭证。
+	RequireNewAccount bool
 	// Cookies 是平台返回的登录 Cookie 明文，仅由凭证端口在最小作用域内消费。
 	Cookies string
 	// Snapshot 是可选的完整浏览器 Cookie 快照；存在时由端口负责合并到加密 metadata。
@@ -154,6 +156,9 @@ func (s *QRLoginService) PersistSuccess(ctx context.Context, input QRLoginInput)
 	case account.UserID != input.UserID:
 		unlock()
 		return QRLoginResult{}, ErrForbidden
+	case input.RequireNewAccount:
+		unlock()
+		return QRLoginResult{}, ErrAlreadyExists
 	default:
 		// updateErr 保存已有账号 Cookie 更新错误。
 		if updateErr := s.updateExisting(ctx, accountID, input); updateErr != nil {

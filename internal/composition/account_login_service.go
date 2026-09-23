@@ -85,6 +85,31 @@ func (service *accountLoginService) PersistQRLoginSuccess(ctx context.Context, u
 	return CookieLoginResult{AccountID: persisted.AccountID, IsNew: persisted.IsNew, UserID: persisted.UserID, CreatedAt: persisted.CreatedAt}, nil
 }
 
+// PersistNewQRLoginSuccess 仅允许持久化此前不存在的平台账号，避免多租户绑定失败时覆盖既有凭证。
+func (service *accountLoginService) PersistNewQRLoginSuccess(ctx context.Context, userID int64, sessionID string, result map[string]any) (CookieLoginResult, error) {
+	if service == nil || service.qrApplication == nil || service.qrSessions == nil {
+		return CookieLoginResult{}, errors.New("扫码登录应用服务未初始化")
+	}
+	persisted, persistErr := service.qrSessions.PersistOnce(sessionID, userID, func() (accountapp.QRLoginSessionPersistence, error) {
+		cookies := resultString(result, "cookies")
+		cookieSnapshot, snapshotComplete := adapter.CookieSnapshotsFromResult(result)
+		scannedAccountID := strings.TrimSpace(firstNonEmpty(resultString(result, "unb"), adapter.AccountIDFromCookie(cookies)))
+		input := accountapp.QRLoginInput{UserID: userID, ScannedAccountID: scannedAccountID, Cookies: cookies, RequireNewAccount: true}
+		if snapshotComplete {
+			input.Snapshot = cookieSnapshot
+		}
+		resultValue, writeErr := service.qrApplication.PersistSuccess(ctx, input)
+		if writeErr != nil {
+			return accountapp.QRLoginSessionPersistence{}, writeErr
+		}
+		return accountapp.QRLoginSessionPersistence{AccountID: resultValue.AccountID, IsNew: resultValue.IsNew, CreatedAt: time.Now().UTC()}, nil
+	})
+	if persistErr != nil {
+		return CookieLoginResult{}, persistErr
+	}
+	return CookieLoginResult{AccountID: persisted.AccountID, IsNew: persisted.IsNew, UserID: persisted.UserID, CreatedAt: persisted.CreatedAt}, nil
+}
+
 // RegisterQRSession 记录二维码会话的用户所有权。
 func (service *accountLoginService) RegisterQRSession(sessionID string, userID int64, createdAt time.Time) {
 	if service != nil && service.qrSessions != nil {

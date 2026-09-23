@@ -39,6 +39,21 @@ func (transport accountLoginTransport) PersistQRLoginSuccess(ctx context.Context
 	return server.AccountLoginResult{AccountID: persisted.AccountID, IsNew: persisted.IsNew}, nil
 }
 
+// PersistNewQRLoginSuccess 仅允许平台首次绑定创建未存在账号，防止覆盖其他会员已关联的账号凭证。
+func (transport accountLoginTransport) PersistNewQRLoginSuccess(ctx context.Context, userID int64, sessionID string, result map[string]any) (server.AccountLoginResult, error) {
+	createOnly, ok := transport.service.(interface {
+		PersistNewQRLoginSuccess(context.Context, int64, string, map[string]any) (composition.CookieLoginResult, error)
+	})
+	if !ok {
+		return server.AccountLoginResult{}, fmt.Errorf("平台扫码首次绑定服务未初始化")
+	}
+	persisted, persistErr := createOnly.PersistNewQRLoginSuccess(ctx, userID, sessionID, result)
+	if persistErr != nil {
+		return server.AccountLoginResult{}, persistErr
+	}
+	return server.AccountLoginResult{AccountID: persisted.AccountID, IsNew: persisted.IsNew}, nil
+}
+
 // RegisterQRSession 注册二维码会话所有权。
 func (transport accountLoginTransport) RegisterQRSession(sessionID string, userID int64, createdAt time.Time) {
 	transport.service.RegisterQRSession(sessionID, userID, createdAt)
@@ -185,6 +200,8 @@ type HTTPDependencies struct {
 	Addr string
 	// Logger 是不记录敏感凭证的结构化日志器。
 	Logger *slog.Logger
+	// PlatformServiceToken is supplied by process configuration and never exposed to HTTP handlers.
+	PlatformServiceToken string
 	// DatabaseHealth 是健康检查使用的窄数据库探测 Port。
 	DatabaseHealth server.DatabaseHealthPort
 }
@@ -200,7 +217,7 @@ func ServerDependencies(services *composition.Services, base HTTPDependencies, s
 		return server.Dependencies{}, fmt.Errorf("组合层 transport Port 未初始化")
 	}
 	return server.Dependencies{
-		Auth: base.Auth, WebDir: base.WebDir, Addr: base.Addr, Logger: base.Logger, DatabaseHealth: base.DatabaseHealth,
+		Auth: base.Auth, WebDir: base.WebDir, Addr: base.Addr, Logger: base.Logger, DatabaseHealth: base.DatabaseHealth, PlatformServiceToken: base.PlatformServiceToken,
 		Applications: server.NewApplicationPorts(server.ApplicationPortsInput{
 			Orders: ordersTransport{services: ports.Orders}, OrderRefreshJobs: orderRefreshJobsTransport{service: ports.OrderRefreshJobs, lifecycleContext: services.LifecycleContext},
 			ItemSinglePublish: ports.ItemSinglePublish, ItemBatchPreview: ports.ItemBatchPreview,

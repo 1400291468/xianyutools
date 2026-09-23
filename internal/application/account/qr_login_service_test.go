@@ -184,6 +184,26 @@ func TestQRLoginPersistSuccessUpdatesOwnedAccount(t *testing.T) {
 	}
 }
 
+// TestQRLoginPersistNewRejectsExistingAccount 验证平台首次绑定不会覆盖现有账号凭证。
+func TestQRLoginPersistNewRejectsExistingAccount(t *testing.T) {
+	repository := &fakeQRLoginRepository{account: QRLoginAccount{ID: "unb-7", UserID: 7}}
+	lifecycle := &fakeQRLoginLifecycle{}
+	service, err := NewQRLoginService(repository, lifecycle)
+	if err != nil {
+		t.Fatalf("构造扫码登录服务失败: %v", err)
+	}
+
+	_, persistErr := service.PersistSuccess(context.Background(), QRLoginInput{
+		UserID: 7, ScannedAccountID: "unb-7", Cookies: "unb=unb-7; token=unchanged", RequireNewAccount: true,
+	})
+	if !errors.Is(persistErr, ErrAlreadyExists) {
+		t.Fatalf("已有账号应被拒绝: %v", persistErr)
+	}
+	if repository.updatedCookies != "" || repository.createdCookies != "" || lifecycle.calls != 0 {
+		t.Fatalf("拒绝重复绑定时不应写入凭证: repository=%+v lifecycle=%+v", repository, lifecycle)
+	}
+}
+
 // TestQRLoginPersistRejectsOwnershipAndMismatch 验证跨用户、目标不一致和不完整结果均不会写入凭证。
 func TestQRLoginPersistRejectsOwnershipAndMismatch(t *testing.T) {
 	// ownershipRepository 返回其他用户拥有的账号。

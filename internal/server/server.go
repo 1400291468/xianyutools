@@ -39,6 +39,8 @@ type Dependencies struct {
 	Logger *slog.Logger
 	// DatabaseHealth 是数据库健康检查应用 Port。
 	DatabaseHealth DatabaseHealthPort
+	// PlatformServiceToken authorizes internal platform-to-platform calls without browser sessions.
+	PlatformServiceToken string
 	// Applications 是完整的 transport 应用 Port 快照；缺失时构造必须失败。
 	Applications *ApplicationPorts
 }
@@ -52,10 +54,11 @@ type DatabaseHealthPort interface {
 // Server 聚合 HTTP transport 依赖，不持有账号运行时或业务 worker 实现。
 type Server struct {
 	// Auth 是 HTTP 会话认证中间件依赖。
-	Auth   *auth.Service
-	Logger *slog.Logger
-	WebDir string // 前端静态资源目录（含 index.html）
-	Addr   string
+	Auth                 *auth.Service
+	Logger               *slog.Logger
+	WebDir               string // 前端静态资源目录（含 index.html）
+	Addr                 string
+	platformServiceToken string
 	// applications 保存构造期注入的 transport 应用 Port 快照。
 	applications *ApplicationPorts
 	// databaseHealth 提供健康检查所需的数据库探测能力，避免 handler 直接触碰 SQL 连接。
@@ -104,15 +107,16 @@ func New(dependencies Dependencies) (*Server, error) {
 		logger = logging.NewLogger(os.Stdout, "text")
 	}
 	return &Server{
-		Auth:           dependencies.Auth,
-		Logger:         logger,
-		WebDir:         dependencies.WebDir,
-		Addr:           dependencies.Addr,
-		applications:   &copiedApplications,
-		databaseHealth: dependencies.DatabaseHealth,
-		loginLimiter:   newLoginFailureLimiter(),
-		taskRegistry:   newTaskRegistry(),
-		backgroundDone: closedSignal(),
+		Auth:                 dependencies.Auth,
+		Logger:               logger,
+		WebDir:               dependencies.WebDir,
+		Addr:                 dependencies.Addr,
+		platformServiceToken: strings.TrimSpace(dependencies.PlatformServiceToken),
+		applications:         &copiedApplications,
+		databaseHealth:       dependencies.DatabaseHealth,
+		loginLimiter:         newLoginFailureLimiter(),
+		taskRegistry:         newTaskRegistry(),
+		backgroundDone:       closedSignal(),
 	}, nil
 }
 
@@ -138,6 +142,7 @@ func (s *Server) Router() chi.Router {
 
 	// 健康检查（无需认证）。
 	s.mountHealthAndVersionedRoutes(r)
+	s.mountPlatformRoutes(r)
 
 	// 认证组（无需登录的端点，但解析会话以判断登录态）。
 	r.Group(func(r chi.Router) {

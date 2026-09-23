@@ -130,11 +130,28 @@ func (s *Server) checkQRLoginStatusAndPersist(w http.ResponseWriter, r *http.Req
 		writeErr(w, http.StatusUnauthorized, "未授权访问")
 		return
 	}
-	// persisted、err 用于本次流程后续判断的persisted、err
-	persisted, err := s.accountLoginApplication().PersistQRLoginSuccess(r.Context(), sess.UserID, sessionID, result, "")
+	// persisted、err 保存扫码成功后的持久化结果。平台服务入口禁止覆盖既有账号，避免后续会员归属校验失败时改写凭证。
+	var persisted AccountLoginResult
+	var err error
+	if strings.HasPrefix(r.URL.Path, "/api/platform/") {
+		createOnly, supported := s.accountLoginApplication().(interface {
+			PersistNewQRLoginSuccess(context.Context, int64, string, map[string]any) (AccountLoginResult, error)
+		})
+		if !supported {
+			writeErr(w, http.StatusInternalServerError, "平台扫码绑定服务未初始化")
+			return
+		}
+		persisted, err = createOnly.PersistNewQRLoginSuccess(r.Context(), sess.UserID, sessionID, result)
+	} else {
+		persisted, err = s.accountLoginApplication().PersistQRLoginSuccess(r.Context(), sess.UserID, sessionID, result, "")
+	}
 	if err != nil {
 		if s.Logger != nil {
 			s.Logger.Warn("保存扫码登录结果失败", "session_id", sessionID, "err", err)
+		}
+		if errors.Is(err, accountapp.ErrAlreadyExists) {
+			writeErrCode(w, http.StatusConflict, "qr_account_already_bound", "该闲鱼账号已被其他会员绑定", "")
+			return
 		}
 		writeErrCode(
 			w,

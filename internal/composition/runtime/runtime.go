@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"strings"
 
 	"xianyu-go/internal/adapter"
 	"xianyu-go/internal/application/lifecycle"
@@ -14,6 +16,7 @@ import (
 	composition "xianyu-go/internal/composition"
 	"xianyu-go/internal/db"
 	"xianyu-go/internal/netguard"
+	"xianyu-go/internal/platformwebhook"
 	"xianyu-go/internal/renewal"
 	"xianyu-go/internal/server"
 )
@@ -70,8 +73,23 @@ func BuildRuntime(options RuntimeOptions, infrastructure RuntimeInfrastructure) 
 	if bundleErr != nil {
 		return Runtime{}, fmt.Errorf("构造账号运行时依赖失败: %w", bundleErr)
 	}
+	// platformWebhook 仅在 URL 与签名密钥同时配置时启用；未配置时保持现有单体行为。
+	platformWebhook := platformwebhook.New(strings.TrimSpace(os.Getenv("XIANYU_PLATFORM_WEBHOOK_URL")), strings.TrimSpace(os.Getenv("XIANYU_PLATFORM_WEBHOOK_SIGNING_SECRET")))
+	if platformWebhook != nil {
+		runtimeBundle.Chat.SetIncomingObserver(func(_ context.Context, message *db.ChatMessage, session *db.ChatSession) {
+			if message == nil || session == nil {
+				return
+			}
+			platformWebhook.Publish(platformwebhook.Event{YdisksAccountID: session.CookieID, MessageKey: message.MessageKey, ChatID: session.ChatID, BuyerID: session.BuyerID, BuyerName: session.BuyerName, ItemID: session.ItemID, ItemTitle: session.ItemTitle, Text: message.Content, MessageType: message.MessageType, Direction: message.Direction})
+		})
+	}
 	// lifecycleCoordinator 由 cmd 最终拥有，用于按顺序启动并逆序关闭后台组件。
 	lifecycleCoordinator := lifecycle.NewCoordinator()
+	if platformWebhook != nil {
+		if addErr := lifecycleCoordinator.Add(lifecycle.NamedComponent{Name: "platform-webhook", Component: lifecycle.FuncComponent{StartFunc: func(ctx context.Context) error { go platformWebhook.Run(ctx); return nil }, CloseFunc: func(context.Context) error { return nil }}}); addErr != nil {
+			return Runtime{}, fmt.Errorf("登记平台 Webhook 生命周期组件失败: %w", addErr)
+		}
+	}
 	if browserManager != nil {
 		// addErr 是浏览器组件登记失败原因，失败时运行时不得继续暴露。
 		if addErr := lifecycleCoordinator.Add(lifecycle.NamedComponent{Name: "browser", Component: lifecycle.FuncComponent{StartFunc: browserManager.InitializeContext, CloseFunc: browserManager.CloseContext}}); addErr != nil {
@@ -191,7 +209,7 @@ func BuildRuntime(options RuntimeOptions, infrastructure RuntimeInfrastructure) 
 	// serverDependencies、dependenciesErr 分别是投影给 HTTP transport 的依赖快照及其构造错误。
 	serverDependencies, dependenciesErr := ServerDependencies(services, HTTPDependencies{
 		Auth: &auth.Service{Store: infrastructure.Store, Logger: infrastructure.Logger, Secure: options.SecureCookie}, WebDir: options.WebDir, Addr: options.Addr,
-		Logger: infrastructure.Logger, DatabaseHealth: databaseHealth,
+		Logger: infrastructure.Logger, DatabaseHealth: databaseHealth, PlatformServiceToken: strings.TrimSpace(os.Getenv("XIANYU_PLATFORM_SERVICE_TOKEN")),
 	}, sessionRecovery)
 	if dependenciesErr != nil {
 		return Runtime{}, dependenciesErr

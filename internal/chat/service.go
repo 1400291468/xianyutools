@@ -330,10 +330,11 @@ type Event struct {
 // Service 用于本次流程后续判断的Service
 type Service struct {
 	// repository 提供聊天服务所需的最小持久化能力。
-	repository Repository
-	mu         sync.RWMutex
-	next       uint64
-	subs       map[uint64]subscriber
+	repository       Repository
+	mu               sync.RWMutex
+	next             uint64
+	subs             map[uint64]subscriber
+	incomingObserver func(context.Context, *db.ChatMessage, *db.ChatSession)
 }
 
 // New 封装New业务协调。
@@ -344,6 +345,16 @@ func New(store *db.Store) *Service {
 // NewWithRepository 使用窄 repository 构造聊天服务，便于应用层和测试隔离数据库聚合器。
 func NewWithRepository(repository Repository) *Service {
 	return &Service{repository: repository, subs: make(map[uint64]subscriber)}
+}
+
+// SetIncomingObserver installs an optional non-blocking observer for newly persisted incoming messages.
+func (s *Service) SetIncomingObserver(observer func(context.Context, *db.ChatMessage, *db.ChatSession)) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.incomingObserver = observer
 }
 
 // RecordIncoming 封装RecordIncoming业务协调。
@@ -421,6 +432,12 @@ func (s *Service) RecordIncoming(ctx context.Context, in Incoming) (*db.ChatMess
 	}
 	if inserted {
 		s.PublishContext(ctx, in.AccountID, Event{Type: "message.created", Message: stored, Session: &session})
+		s.mu.RLock()
+		observer := s.incomingObserver
+		s.mu.RUnlock()
+		if observer != nil {
+			observer(ctx, stored, &session)
+		}
 	}
 	return stored, inserted, roleErr
 }
