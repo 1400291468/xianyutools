@@ -1,3 +1,10 @@
+FROM --platform=$BUILDPLATFORM node:24-trixie-slim AS frontend
+WORKDIR /src/frontend
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
 FROM --platform=$BUILDPLATFORM golang:1.26-trixie AS builder
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
@@ -9,10 +16,11 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+COPY --from=frontend /src/frontend/dist ./internal/webui/static
 RUN CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" go build -trimpath \
       -ldflags="-s -w -X xianyu-go/internal/version.Version=$APP_VERSION -X xianyu-go/internal/version.Commit=$VCS_REF -X xianyu-go/internal/version.BuildTime=$BUILD_TIME" \
       -o /out/xianyu-server ./cmd/server
 
-# 测试镜像复用上游已验证的 Chromium、前端资源和运行依赖，只替换本次变更的服务二进制。
-FROM --platform=linux/amd64 ghcr.io/christ9038/ydisks-xianyu-helper:latest
+# 复用上游已验证的 Chromium 与系统运行依赖，仅替换本次变更的服务二进制。
+FROM ghcr.io/christ9038/ydisks-xianyu-helper:latest
 COPY --from=builder /out/xianyu-server /app/xianyu-server
