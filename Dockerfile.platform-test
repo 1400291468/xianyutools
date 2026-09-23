@@ -16,7 +16,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-COPY --from=frontend /src/frontend/dist ./internal/webui/static
+COPY --from=frontend /src/internal/webui/static ./internal/webui/static
 RUN CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" go build -trimpath \
       -ldflags="-s -w -X xianyu-go/internal/version.Version=$APP_VERSION -X xianyu-go/internal/version.Commit=$VCS_REF -X xianyu-go/internal/version.BuildTime=$BUILD_TIME" \
       -o /out/xianyu-server ./cmd/server
