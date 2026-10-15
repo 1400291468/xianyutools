@@ -69,10 +69,10 @@ describe('useAccountQRCodeLogin 二维码登录协调器', /* 当前回调验证
 
     expect(qrLoginMocks.completeQRVerification).toHaveBeenCalledWith('session-1', 'account-1', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(hook.result.current.qrStatus).toBe('success');
-    await act(/* closeAction 推进成功后的延迟关闭定时器。 */ async () => {
-      await vi.advanceTimersByTimeAsync(1000);
+    await act(/* closeAction 推进成功后的延迟关闭和账号状态刷新定时器。 */ async () => {
+      await vi.advanceTimersByTimeAsync(9_000);
     });
-    expect(onLoginSuccess).toHaveBeenCalledTimes(1);
+    expect(onLoginSuccess).toHaveBeenCalledTimes(5);
     expect(hook.result.current.showQRModal).toBe(false);
     hook.unmount();
   });

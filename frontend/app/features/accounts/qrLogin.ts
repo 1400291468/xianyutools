@@ -63,6 +63,8 @@ export const useAccountQRCodeLogin = ({ onLoginSuccess }: AccountQRCodeLoginOpti
   const qrCompleteAbortRef = useRef<AbortController | null>(null);
   // qrCloseTimerRef 保存二维码弹窗延迟关闭定时器。
   const qrCloseTimerRef = useRef<number | null>(null);
+  // qrRefreshTimersRef 保存扫码成功后等待运行时建连的账号刷新定时器。
+  const qrRefreshTimersRef = useRef<number[]>([]);
 
   if (qrPollerRef.current === null) {
     qrPollerRef.current = createQRLoginPoller();
@@ -79,6 +81,29 @@ export const useAccountQRCodeLogin = ({ onLoginSuccess }: AccountQRCodeLoginOpti
     }
   };
 
+  // clearQRRefreshTimers 清理扫码成功后等待运行时建连的刷新任务。
+  const clearQRRefreshTimers = () => {
+    for (const timer of qrRefreshTimersRef.current) window.clearTimeout(timer);
+    qrRefreshTimersRef.current = [];
+  };
+
+  // refreshAccountsAfterLogin 在扫码成功后的建连窗口内重复读取账号状态。
+  const refreshAccountsAfterLogin = () => {
+    clearQRRefreshTimers();
+    // refreshDelays 定义等待 WebSocket 建连的刷新时间点，单位为毫秒。
+    const refreshDelays = [0, 1_500, 3_000, 5_000, 8_000];
+    qrRefreshTimersRef.current = refreshDelays.map(
+      // delay 表示当前账号状态刷新的相对延迟，单位为毫秒。
+      (delay) => window.setTimeout(
+        // refreshTimerCallback 在指定延迟后读取最新账号状态。
+        () => {
+          void onLoginSuccess();
+        },
+        delay,
+      ),
+    );
+  };
+
   // stopQRPolling 停止二维码登录状态轮询。
   const stopQRPolling = () => {
     qrPollerRef.current?.stop();
@@ -91,6 +116,7 @@ export const useAccountQRCodeLogin = ({ onLoginSuccess }: AccountQRCodeLoginOpti
     qrRequestGateRef.current?.cancel();
     stopQRPolling();
     clearQRCloseTimer();
+    clearQRRefreshTimers();
     setShowQRModal(false);
   };
 
@@ -101,7 +127,7 @@ export const useAccountQRCodeLogin = ({ onLoginSuccess }: AccountQRCodeLoginOpti
 		if (!qrRequestGateRef.current?.isCurrent(requestGeneration)) return;
       qrCloseTimerRef.current = null;
       setShowQRModal(false);
-      void onLoginSuccess();
+      refreshAccountsAfterLogin();
     }, 1000);
   };
 
@@ -113,6 +139,7 @@ export const useAccountQRCodeLogin = ({ onLoginSuccess }: AccountQRCodeLoginOpti
       qrGenerateAbortRef.current?.abort();
 		qrCompleteAbortRef.current?.abort();
       clearQRCloseTimer();
+      clearQRRefreshTimers();
     };
     return cleanup;
   }, []);
@@ -130,6 +157,7 @@ export const useAccountQRCodeLogin = ({ onLoginSuccess }: AccountQRCodeLoginOpti
   // startQRLogin 启动二维码生成、轮询和成功后的账号持久化流程。
   const startQRLogin = async (target?: AccountDetail): Promise<void> => {
     stopQRPolling();
+    clearQRRefreshTimers();
     qrGenerateAbortRef.current?.abort();
 	qrCompleteAbortRef.current?.abort();
     // controller 控制当前二维码生成请求的取消。
